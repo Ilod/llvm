@@ -5292,6 +5292,20 @@ const SCEV *ScalarEvolution::createSCEV(Value *V) {
 //                   Iteration Count Computation Code
 //
 
+static unsigned getConstantTripCount(const SCEVConstant *ExitCount) {
+  if (!ExitCount)
+    return 0;
+
+  ConstantInt *ExitConst = ExitCount->getValue();
+
+  // Guard against huge trip counts.
+  if (ExitConst->getValue().getActiveBits() > 32)
+    return 0;
+
+  // In case of integer overflow, this returns 0, which is correct.
+  return ((unsigned)ExitConst->getZExtValue()) + 1;
+}
+
 unsigned ScalarEvolution::getSmallConstantTripCount(Loop *L) {
   if (BasicBlock *ExitingBB = L->getExitingBlock())
     return getSmallConstantTripCount(L, ExitingBB);
@@ -5307,17 +5321,13 @@ unsigned ScalarEvolution::getSmallConstantTripCount(Loop *L,
          "Exiting block must actually branch out of the loop!");
   const SCEVConstant *ExitCount =
       dyn_cast<SCEVConstant>(getExitCount(L, ExitingBlock));
-  if (!ExitCount)
-    return 0;
+  return getConstantTripCount(ExitCount);
+}
 
-  ConstantInt *ExitConst = ExitCount->getValue();
-
-  // Guard against huge trip counts.
-  if (ExitConst->getValue().getActiveBits() > 32)
-    return 0;
-
-  // In case of integer overflow, this returns 0, which is correct.
-  return ((unsigned)ExitConst->getZExtValue()) + 1;
+unsigned ScalarEvolution::getSmallConstantMaxTripCount(Loop *L) {
+  const auto *MaxExitCount =
+      dyn_cast<SCEVConstant>(getMaxBackedgeTakenCount(L));
+  return getConstantTripCount(MaxExitCount);
 }
 
 unsigned ScalarEvolution::getSmallConstantTripMultiple(Loop *L) {
@@ -8938,7 +8948,8 @@ struct SCEVCollectTerms {
       : Terms(T) {}
 
   bool follow(const SCEV *S) {
-    if (isa<SCEVUnknown>(S) || isa<SCEVMulExpr>(S)) {
+    if (isa<SCEVUnknown>(S) || isa<SCEVMulExpr>(S) ||
+        isa<SCEVSignExtendExpr>(S)) {
       if (!containsUndefs(S))
         Terms.push_back(S);
 
